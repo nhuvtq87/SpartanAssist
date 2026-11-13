@@ -1,7 +1,7 @@
 # SpartanAssist — Multi-Agent AI IT Help Desk
 **BUS4 118S SPECIAL TOPICS MIS · Capstone · Team Auto-Mates · San José State University**
 
-Nhu Vo (Tech Lead) · Liz Pham (Developer) · Sri Sudula (Project Manager / Coordinator) · Kimberly Gomez (Business Lead) · Yuvraj Singh (Presentation Lead) · Jorge Perez (QA & Testing Lead)
+Sri Sudula (Project Manager / Coordinator) · Nhu Vo (Tech Lead) · Liz Pham (Developer) ·  Kimberly Gomez (Business Lead) · Yuvraj Singh (Presentation Lead) · Jorge Perez (QA & Testing Lead)
 
 SpartanAssist is a LangGraph system for campus IT tickets. A Privacy Guard runs first, then the Intake, Knowledge (RAG), Workflow and Escalation agents, then a Responder. Workflow automations run through a real MCP server, and VS Code + GitHub Copilot connects to the same server.
 
