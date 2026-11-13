@@ -1,0 +1,8 @@
+{
+  "name": "SpartanAssist — Multi-Agent AI IT Help Desk",
+  "description": "Multi-agent campus IT help desk featuring Privacy Guard PII redaction, Intake classification, grounded RAG knowledge retrieval with citations, MCP workflow automations, policy-driven human escalation, and a staff ticket & validation console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
