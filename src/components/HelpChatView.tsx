@@ -5,6 +5,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Cpu,
   ExternalLink,
   Lock,
@@ -22,7 +23,7 @@ import {
   Printer,
   X,
 } from "lucide-react";
-import type { HelpDeskState, KBArticle, RunMode } from "../types";
+import type { ChatHistoryItem, HelpDeskState, KBArticle, RunMode } from "../types";
 
 interface ChatTurn {
   id: string;
@@ -32,11 +33,13 @@ interface ChatTurn {
 }
 
 interface HelpChatViewProps {
+  audience?: "end_user" | "faculty";
   services: Record<string, string>;
   geminiAvailable: boolean;
   mode: RunMode;
   onModeChange: (mode: RunMode) => void;
-  onOpenTicketQueue: () => void;
+  onOpenTicketQueue?: () => void;
+  onOpenGuides?: () => void;
   onInspectKBArticle: (docId: string) => void;
   kbArticles: KBArticle[];
   externalHumanTrigger: number;
@@ -117,15 +120,26 @@ const NODE_LABELS: Array<{ id: string; label: string; role: string }> = [
   { id: "responder", label: "Responder", role: "Plain-language output" },
 ];
 
+const SERVICE_DISPLAY_NAMES: Record<string, string> = {
+  wifi_eduroam: "Wi-Fi (eduroam)",
+  vpn_globalprotect: "VPN (GlobalProtect)",
+  canvas_lms: "Canvas LMS",
+  campus_email: "Campus Email",
+  printing_system: "Campus Printing",
+};
+
 export default function HelpChatView({
+  audience = "end_user",
   services,
   geminiAvailable,
   mode,
   onModeChange,
   onOpenTicketQueue,
+  onOpenGuides,
   kbArticles,
   externalHumanTrigger,
 }: HelpChatViewProps) {
+  const isFaculty = audience === "faculty";
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -158,15 +172,30 @@ export default function HelpChatView({
     setError(null);
     setInput("");
 
+    const history: ChatHistoryItem[] = turns.slice(-4).flatMap((t) => [
+      { role: "user", text: t.state.query, category: t.state.category },
+      {
+        role: "assistant",
+        text: t.state.final_response || t.state.answer,
+        category: t.state.category,
+        citations: t.state.citations,
+      },
+    ]);
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 25000);
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           query: trimmed,
           userId: "student_001",
           mode,
           forceHuman,
+          history,
         }),
       });
       if (!res.ok) {
@@ -178,8 +207,13 @@ export default function HelpChatView({
       setTurns((prev) => [...prev, { id, rawInput: trimmed, state: data }]);
       setActiveTurnId(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to process request");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Request took too long. Try switching Engine to Offline Rules + TF-IDF or resend.");
+      } else {
+        setError(err instanceof Error ? err.message : "Unable to process request");
+      }
     } finally {
+      window.clearTimeout(timer);
       setLoading(false);
     }
   }
@@ -281,7 +315,7 @@ export default function HelpChatView({
         {/* Left/Main Help Desk Chat Column */}
         <section
           aria-label="SpartanAssist Help Chat"
-          className="lg:col-span-7 xl:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col min-h-[640px]"
+          className="lg:col-span-7 xl:col-span-7 bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col h-[calc(100vh-10.5rem)] min-h-[480px] max-h-[740px]"
         >
           {/* Chat Workspace Subheader */}
           <div className="px-5 py-3.5 bg-[#0055A2] text-white flex items-center justify-between gap-4">
@@ -344,7 +378,7 @@ export default function HelpChatView({
           )}
 
           {/* Scrollable Conversation Area */}
-          <div className="flex-1 p-5 space-y-6 overflow-y-auto max-h-[560px] bg-slate-50/50">
+          <div className="flex-1 min-h-0 p-5 space-y-6 overflow-y-auto bg-slate-50/50">
             {turns.length === 0 ? (
               <div className="space-y-6">
                 {/* Greeting Bubble */}
@@ -461,24 +495,32 @@ export default function HelpChatView({
                                 Resolved
                               </span>
                             )}
-                            <span className="text-slate-300" aria-hidden="true">
-                              ·
-                            </span>
-                            <span className="text-slate-600 font-medium">{catLabel}</span>
-                            <span className="text-slate-300" aria-hidden="true">
-                              ·
-                            </span>
-                            <span className="font-mono tabular-nums text-slate-600">
-                              {s.severity}
-                            </span>
-                            <span className="text-slate-300" aria-hidden="true">
-                              ·
-                            </span>
-                            <span className="font-mono tabular-nums text-slate-500">
-                              {latencyDisplay}
-                            </span>
+                            {!s.is_conversational && (
+                              <>
+                                <span className="text-slate-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-slate-600 font-medium">{catLabel}</span>
+                                <span className="text-slate-300" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="font-mono tabular-nums text-slate-600">
+                                  {s.severity}
+                                </span>
+                                {isFaculty && (
+                                  <>
+                                    <span className="text-slate-300" aria-hidden="true">
+                                      ·
+                                    </span>
+                                    <span className="font-mono tabular-nums text-slate-500">
+                                      {latencyDisplay}
+                                    </span>
+                                  </>
+                                )}
+                              </>
+                            )}
                           </div>
-                          {turns.length > 1 && (
+                          {isFaculty && turns.length > 1 && (
                             <span className="text-[11px] text-slate-400">
                               {isSelected ? "Inspecting trace" : "Click to inspect"}
                             </span>
@@ -486,7 +528,9 @@ export default function HelpChatView({
                         </div>
 
                         {/* Body & Action Steps */}
-                        {isOutOfScope ? (
+                        {s.is_conversational ? (
+                          <p className="text-sm text-slate-700 leading-relaxed">{s.answer}</p>
+                        ) : isOutOfScope ? (
                           <p className="text-sm text-slate-700 leading-relaxed">
                             I can only help with campus IT topics (Wi-Fi, accounts, software,
                             devices, email, printing, Canvas). For anything else, the campus info
@@ -630,16 +674,18 @@ export default function HelpChatView({
                                 Quote this if you call ({s.escalation?.channel ?? "help desk"})
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onOpenTicketQueue();
-                              }}
-                              className="text-xs font-medium text-[#0055A2] hover:underline whitespace-nowrap"
-                            >
-                              View in Staff Queue →
-                            </button>
+                            {isFaculty && onOpenTicketQueue && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenTicketQueue();
+                                }}
+                                className="text-xs font-medium text-[#0055A2] hover:underline whitespace-nowrap"
+                              >
+                                View in Ticket Queue →
+                              </button>
+                            )}
                           </div>
                           {s.severity === "P1" && (
                             <button
@@ -670,16 +716,18 @@ export default function HelpChatView({
                                 · closes automatically if this fixes it
                               </span>
                             </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onOpenTicketQueue();
-                              }}
-                              className="text-[#0055A2] hover:underline font-medium"
-                            >
-                              Staff Queue →
-                            </button>
+                            {isFaculty && onOpenTicketQueue && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenTicketQueue();
+                                }}
+                                className="text-[#0055A2] hover:underline font-medium"
+                              >
+                                Ticket Queue →
+                              </button>
+                            )}
                           </div>
 
                           {/* Did this fix it? */}
@@ -737,7 +785,9 @@ export default function HelpChatView({
                 {loading && (
                   <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
                     <div className="text-xs font-medium text-slate-500">
-                      Running Privacy Guard → Intake → Knowledge RAG → Workflow...
+                      {isFaculty
+                        ? "Running Privacy Guard → Intake → Knowledge RAG → Workflow..."
+                        : "Looking up campus IT guides and checking diagnostics..."}
                     </div>
                     <div className="h-3 w-3/4 bg-slate-100 rounded animate-pulse" />
                     <div className="h-3 w-1/2 bg-slate-100 rounded animate-pulse" />
@@ -768,8 +818,12 @@ export default function HelpChatView({
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Describe your issue..."
-                aria-label="Describe your IT issue"
+                placeholder={
+                  turns.length > 0
+                    ? "Reply or ask a follow-up question..."
+                    : "Ask SpartanAssist or describe your IT issue..."
+                }
+                aria-label="Describe your IT issue or chat with SpartanAssist"
                 className="flex-1 min-h-[44px] px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-full text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#0055A2] focus:bg-white transition-colors"
               />
               <button
@@ -781,58 +835,61 @@ export default function HelpChatView({
                 <Send className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 px-1">
-              <div className="flex items-center gap-2">
-                <Cpu className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                <span>Engine:</span>
-                <div className="inline-flex items-center bg-slate-100 p-0.5 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() => onModeChange("gemini")}
-                    disabled={!geminiAvailable}
-                    title={
-                      geminiAvailable
-                        ? "Use Gemini 4 Hydrogen + Gemini Embeddings"
-                        : "Gemini API key not configured on server"
-                    }
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                      mode === "gemini"
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-500 hover:text-slate-800 disabled:opacity-40"
-                    }`}
-                  >
-                    Gemini 4
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onModeChange("offline")}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                      mode === "offline"
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    Offline Rules + TF-IDF
-                  </button>
+            {isFaculty && (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 px-1">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                  <span>Engine:</span>
+                  <div className="inline-flex items-center bg-slate-100 p-0.5 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => onModeChange("gemini")}
+                      disabled={!geminiAvailable}
+                      title={
+                        geminiAvailable
+                          ? "Use Gemini 4 Hydrogen + Gemini Embeddings"
+                          : "Gemini API key not configured on server"
+                      }
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        mode === "gemini"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-800 disabled:opacity-40"
+                      }`}
+                    >
+                      Gemini 4
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onModeChange("offline")}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                        mode === "offline"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Offline Rules + TF-IDF
+                    </button>
+                  </div>
                 </div>
+                <span className="text-[11px] text-slate-400">
+                  {mode === "gemini" ? "Structured output + RAG citations" : "Deterministic local mode"}
+                </span>
               </div>
-              <span className="text-[11px] text-slate-400">
-                {mode === "gemini" ? "Structured output + RAG citations" : "Deterministic local mode"}
-              </span>
-            </div>
+            )}
           </form>
         </section>
 
-        {/* Right Column: Live Multi-Agent Routing Inspector & Demo Launcher */}
-        <aside className="lg:col-span-5 xl:col-span-5 space-y-5">
-          {/* Quick Capstone Demo Launcher */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3.5">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-display font-bold text-sm text-slate-900">
-                Capstone Demo Scenarios
-              </h2>
-              <span className="text-xs text-slate-500">One per LangGraph route</span>
-            </div>
+        {/* Right Column: End-User Support Resources OR Faculty Multi-Agent Inspector */}
+        {isFaculty ? (
+          <aside className="lg:col-span-5 xl:col-span-5 space-y-5">
+            {/* Quick Capstone Demo Launcher */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display font-bold text-sm text-slate-900">
+                  Capstone Demo Scenarios
+                </h2>
+                <span className="text-xs text-slate-500">One per LangGraph route</span>
+              </div>
             <div className="space-y-1.5">
               {DEMO_SCENARIOS.map((demo) => (
                 <button
@@ -991,6 +1048,128 @@ export default function HelpChatView({
             )}
           </div>
         </aside>
+        ) : (
+          <aside className="lg:col-span-5 xl:col-span-5 space-y-5">
+            {/* Live Campus Service Status */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display font-bold text-sm text-slate-900">
+                  Campus Service Status
+                </h2>
+                <span className="text-xs text-emerald-700 font-medium">
+                  {allOperational ? "All operational" : "Check details"}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {Object.entries(services).map(([key, status]) => {
+                  const isOk = status === "operational";
+                  return (
+                    <div key={key} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                      <span className="font-medium text-slate-800">
+                        {SERVICE_DISPLAY_NAMES[key] ?? key.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`font-medium ${
+                          isOk ? "text-emerald-700" : "text-amber-700"
+                        }`}
+                      >
+                        {isOk ? "Operational" : status}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Session Tickets Created by This User */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display font-bold text-sm text-slate-900">
+                  Your Session Tickets
+                </h2>
+                <span className="text-xs text-slate-500">Auto-logged</span>
+              </div>
+              {turns.filter((t) => t.state.ticket_id).length === 0 ? (
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Any IT issue you submit here is automatically logged with a tracking number so
+                  you can follow up or reference it if you call the desk.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {turns
+                    .filter((t) => t.state.ticket_id)
+                    .slice()
+                    .reverse()
+                    .map((t) => {
+                      const s = t.state;
+                      const resolved = t.feedbackGiven === "fixed" || (s.status === "resolved" && t.feedbackGiven !== "escalated");
+                      return (
+                        <div
+                          key={t.id}
+                          className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono font-semibold text-slate-900">
+                              {s.ticket_id}
+                            </span>
+                            <span
+                              className={`font-semibold ${
+                                resolved ? "text-emerald-700" : "text-amber-800"
+                              }`}
+                            >
+                              {resolved ? "Resolved" : "With support team"}
+                            </span>
+                          </div>
+                          <div className="text-slate-600 truncate">{s.query}</div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Help Desk Hours & Self-Service Guides Link */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3.5">
+              <h2 className="font-display font-bold text-sm text-slate-900">
+                Support Hours &amp; Self-Service
+              </h2>
+              <div className="space-y-2.5 text-xs text-slate-600">
+                <div className="flex items-start gap-2.5">
+                  <Phone className="w-4 h-4 text-[#0055A2] shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <div className="font-semibold text-slate-900">24/7 Urgent Help Line</div>
+                    <div>(408) 555-0119 · Exams, lockouts &amp; security</div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <Clock className="w-4 h-4 text-[#0055A2] shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <div className="font-semibold text-slate-900">Walk-In Help Desk</div>
+                    <div>Monday–Friday · 8:00 AM – 6:00 PM</div>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-1 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCallModal(true)}
+                  className="flex-1 min-h-[38px] px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap"
+                >
+                  Contact details
+                </button>
+                {onOpenGuides && (
+                  <button
+                    type="button"
+                    onClick={onOpenGuides}
+                    className="flex-1 min-h-[38px] px-3 py-2 bg-blue-50 hover:bg-blue-100 text-[#0055A2] text-xs font-semibold rounded-xl transition-colors whitespace-nowrap"
+                  >
+                    Browse IT guides →
+                  </button>
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* Accessible Call Help Desk Modal */}

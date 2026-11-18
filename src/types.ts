@@ -70,6 +70,13 @@ export interface EscalationInfo {
   handoff: string;
 }
 
+export interface ChatHistoryItem {
+  role: "user" | "assistant";
+  text: string;
+  category?: Category;
+  citations?: string[];
+}
+
 export interface HelpDeskState {
   user_id: string;
   raw_query: string;
@@ -97,6 +104,7 @@ export interface HelpDeskState {
   latency_ms: number;
   mode_used: RunMode;
   fallback_reason?: string;
+  is_conversational?: boolean;
 }
 
 export interface Ticket {

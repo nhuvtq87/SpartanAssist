@@ -260,24 +260,40 @@ function cosineSim(a: number[], b: number[]): number {
 
 let geminiChunkVectors: number[][] | null = null;
 let geminiEmbedPromise: Promise<number[][] | null> | null = null;
+let geminiEmbedDisabledUntil = 0;
+
+function withEmbedTimeout<T>(promise: Promise<T>, ms = 8000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("Embedding request timed out")), ms)
+    ),
+  ]);
+}
 
 export async function ensureGeminiEmbeddings(ai: GoogleGenAI): Promise<number[][] | null> {
   if (geminiChunkVectors) return geminiChunkVectors;
+  if (Date.now() < geminiEmbedDisabledUntil) return null;
   if (geminiEmbedPromise) return geminiEmbedPromise;
 
   geminiEmbedPromise = (async () => {
     try {
-      const res = await ai.models.embedContent({
-        model: "gemini-embedding-2",
-        contents: docStrings,
-      });
+      const res = await withEmbedTimeout(
+        ai.models.embedContent({
+          model: "gemini-embedding-2",
+          contents: docStrings,
+        }),
+        8000
+      );
       const embeddings = res.embeddings?.map((e) => e.values ?? []) ?? [];
       if (embeddings.length === KB_CHUNKS.length && embeddings[0].length > 0) {
         geminiChunkVectors = embeddings;
         return geminiChunkVectors;
       }
+      geminiEmbedDisabledUntil = Date.now() + 60_000;
       return null;
     } catch {
+      geminiEmbedDisabledUntil = Date.now() + 60_000;
       return null;
     } finally {
       geminiEmbedPromise = null;
@@ -291,13 +307,17 @@ export async function embedQueryForKB(
   query: string,
   ai: GoogleGenAI
 ): Promise<{ queryVec: number[]; docVecs: number[][] } | null> {
+  if (Date.now() < geminiEmbedDisabledUntil) return null;
   try {
     const [cachedDocs, qRes] = await Promise.all([
       ensureGeminiEmbeddings(ai),
-      ai.models.embedContent({
-        model: "gemini-embedding-2",
-        contents: query,
-      }),
+      withEmbedTimeout(
+        ai.models.embedContent({
+          model: "gemini-embedding-2",
+          contents: query,
+        }),
+        8000
+      ),
     ]);
     const qVals = qRes.embeddings?.[0]?.values;
     if (cachedDocs && qVals && qVals.length > 0) {
@@ -305,6 +325,7 @@ export async function embedQueryForKB(
     }
     return null;
   } catch {
+    geminiEmbedDisabledUntil = Date.now() + 60_000;
     return null;
   }
 }

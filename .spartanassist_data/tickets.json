@@ -1,0 +1,368 @@
+[
+  {
+    "id": "INC-261117-2027F",
+    "created": "2026-11-17T22:01:08",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P4",
+    "summary": "What else can I try if that did not work?",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "3 business days",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T22:01:08",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-CE4FB",
+    "created": "2026-11-17T22:01:08",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T22:01:08",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-1B994",
+    "created": "2026-11-17T22:00:37",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P4",
+    "summary": "What else can I try if that did not work?",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "3 business days",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T22:00:37",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-AE65E",
+    "created": "2026-11-17T22:00:27",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T22:00:27",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-6A02C",
+    "created": "2026-11-17T21:59:45",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:59:45",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-D5E00",
+    "created": "2026-11-17T21:59:39",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:59:39",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-5AC52",
+    "created": "2026-11-17T21:58:53",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P4",
+    "summary": "Still dropping even after forgetting eduroam",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "3 business days",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:58:53",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-43805",
+    "created": "2026-11-17T21:58:53",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:58:53",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-69A82",
+    "created": "2026-11-17T21:57:53",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "My wifi keeps dropping",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:57:53",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-73105",
+    "created": "2026-11-17T21:56:52",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "My wifi keeps dropping",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:56:52",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-C7CEE",
+    "created": "2026-11-17T21:56:20",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "My wifi keeps dropping",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:56:20",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-0CC2C",
+    "created": "2026-11-17T21:56:03",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "My wifi keeps dropping",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:56:03",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-A781E",
+    "created": "2026-11-17T21:55:03",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "wifi keeps dropping in library",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:55:03",
+    "resolution_minutes": 0.1
+  },
+  {
+    "id": "INC-261117-A7A4E",
+    "created": "2026-11-17T21:51:19",
+    "user": "student_001",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "Confirmed fixed by student",
+    "sla": "1 business day",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow"
+    ],
+    "resolved_at": "2026-11-17T21:51:19",
+    "resolution_minutes": 0.1,
+    "csat": 5
+  },
+  {
+    "id": "INC-261112-B28BD",
+    "created": "2026-11-12T11:25:10",
+    "user": "student_103",
+    "category": "authentication",
+    "priority": "P1",
+    "summary": "My account says DISABLED and my online final exam starts in 20 minutes! My ID is [STUDENT_ID]",
+    "status": "escalated",
+    "team": "accounts",
+    "notes": "P1 authentication case for student_103. Escalated because: P1 severity. Administrative hold requires Accounts team review.",
+    "sla": "15 minutes",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "escalation",
+      "responder"
+    ],
+    "escalation_reasons": [
+      "P1 severity"
+    ]
+  },
+  {
+    "id": "INC-261112-D419F",
+    "created": "2026-11-12T11:21:42",
+    "user": "student_104",
+    "category": "security",
+    "priority": "P1",
+    "summary": "I clicked a link in an email and typed my password on a weird login page. My password [REDACTED]",
+    "status": "escalated",
+    "team": "security_ops",
+    "notes": "P1 security case for student_104. Possible account compromise; escalated to Security Ops via 24/7 phone line.",
+    "sla": "15 minutes",
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "escalation",
+      "responder"
+    ],
+    "escalation_reasons": [
+      "P1 severity",
+      "possible security incident"
+    ]
+  },
+  {
+    "id": "INC-261112-C2164",
+    "created": "2026-11-12T11:18:05",
+    "user": "student_102",
+    "category": "authentication",
+    "priority": "P2",
+    "summary": "I'm locked out of my account after too many tries and my essay is due tonight",
+    "status": "resolved",
+    "team": "accounts",
+    "notes": "auto-resolved by SpartanAssist (unlock_account)",
+    "sla": "4 hours",
+    "csat": 5,
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow",
+      "responder"
+    ]
+  },
+  {
+    "id": "INC-261112-249B2",
+    "created": "2026-11-12T11:14:29",
+    "user": "student_101",
+    "category": "network",
+    "priority": "P3",
+    "summary": "The wifi in the library keeps disconnecting every few minutes on my laptop",
+    "status": "resolved",
+    "team": "networking",
+    "notes": "auto-resolved by SpartanAssist (run_network_diagnostics)",
+    "sla": "1 business day",
+    "csat": 5,
+    "trace": [
+      "privacy_guard",
+      "intake",
+      "knowledge",
+      "workflow",
+      "responder"
+    ]
+  }
+]

@@ -11,6 +11,7 @@ import {
 import type { KBArticle, KBChunk, RetrievedChunk, RunMode } from "../types";
 
 interface KnowledgeBaseViewProps {
+  audience?: "end_user" | "faculty";
   articles: KBArticle[];
   chunks: KBChunk[];
   thresholds: Record<RunMode, number>;
@@ -40,6 +41,7 @@ const SAMPLE_RAG_QUERIES = [
 ];
 
 export default function KnowledgeBaseView({
+  audience = "faculty",
   articles,
   chunks,
   thresholds,
@@ -47,7 +49,9 @@ export default function KnowledgeBaseView({
   geminiAvailable,
   initialArticleId,
 }: KnowledgeBaseViewProps) {
+  const isFaculty = audience === "faculty";
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [articleSearch, setArticleSearch] = useState<string>("");
   const [selectedArticleId, setSelectedArticleId] = useState<string>(
     initialArticleId ?? articles[0]?.id ?? "KB-NET-01"
   );
@@ -68,9 +72,11 @@ export default function KnowledgeBaseView({
   }, [initialArticleId]);
 
   useEffect(() => {
-    runRagTest(SAMPLE_RAG_QUERIES[0], "", ragMode);
+    if (isFaculty) {
+      runRagTest(SAMPLE_RAG_QUERIES[0], "", ragMode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isFaculty]);
 
   async function runRagTest(q: string, catHint: string, testMode: RunMode) {
     const trimmed = q.trim();
@@ -87,10 +93,17 @@ export default function KnowledgeBaseView({
     }
   }
 
-  const filteredArticles =
-    selectedCategory === "all"
-      ? articles
-      : articles.filter((a) => a.category === selectedCategory);
+  const normalizedQuery = articleSearch.trim().toLowerCase();
+  const filteredArticles = articles.filter((a) => {
+    if (selectedCategory !== "all" && a.category !== selectedCategory) return false;
+    if (!normalizedQuery) return true;
+    return (
+      a.title.toLowerCase().includes(normalizedQuery) ||
+      a.body.toLowerCase().includes(normalizedQuery) ||
+      a.category.toLowerCase().includes(normalizedQuery) ||
+      a.id.toLowerCase().includes(normalizedQuery)
+    );
+  });
 
   const activeArticle =
     filteredArticles.find((a) => a.id === selectedArticleId) ??
@@ -113,11 +126,12 @@ export default function KnowledgeBaseView({
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="font-display font-bold text-2xl text-slate-900 tracking-tight">
-            Knowledge Base &amp; RAG Grounding Explorer
+            {isFaculty ? "Knowledge Base & RAG Grounding Explorer" : "Self-Service Campus IT Guides"}
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            {articles.length} campus IT articles split into {chunks.length} section-level chunks.
-            Queries below the similarity floor are escalated instead of guessed.
+            {isFaculty
+              ? `${articles.length} campus IT articles split into ${chunks.length} section-level chunks. Queries below the similarity floor are escalated instead of guessed.`
+              : `Browse ${articles.length} campus IT guides for Wi-Fi, accounts, Duo MFA, Canvas, software, and printing.`}
           </p>
         </div>
         <div className="text-xs text-slate-500 flex items-center gap-2">
@@ -126,7 +140,8 @@ export default function KnowledgeBaseView({
         </div>
       </div>
 
-      {/* Live RAG Similarity Tester */}
+      {/* Live RAG Similarity Tester (Faculty Only) */}
+      {isFaculty && (
       <section
         aria-label="Live RAG Similarity Tester"
         className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4"
@@ -297,16 +312,17 @@ export default function KnowledgeBaseView({
           </div>
         )}
       </section>
+      )}
 
-      {/* Article Catalog + Chunk Inspector */}
+      {/* Article Catalog + Guide / Chunk Inspector */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Category Filter + Article List */}
         <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl overflow-hidden">
           <div className="p-4 border-b border-slate-200 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <h2 className="font-display font-bold text-sm text-slate-900 flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-[#0055A2]" aria-hidden="true" />
-                <span>Articles ({filteredArticles.length})</span>
+                <span>{isFaculty ? "Articles" : "Guides"} ({filteredArticles.length})</span>
               </h2>
               <select
                 aria-label="Filter KB articles by category"
@@ -320,6 +336,20 @@ export default function KnowledgeBaseView({
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="relative">
+              <Search
+                className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <input
+                type="text"
+                value={articleSearch}
+                onChange={(e) => setArticleSearch(e.target.value)}
+                placeholder={isFaculty ? "Filter articles..." : "Search guides (e.g. eduroam, Duo, Adobe)..."}
+                aria-label="Search guides"
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#0055A2] focus:bg-white"
+              />
             </div>
           </div>
 
@@ -339,17 +369,23 @@ export default function KnowledgeBaseView({
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="font-mono font-semibold text-[#0055A2]">{art.id}</span>
                     <span className="text-slate-500 font-mono tabular-nums">
-                      {art.category.replace(/_/g, " ")} · {chunkCount} chunks
+                      {art.category.replace(/_/g, " ")}
+                      {isFaculty ? ` · ${chunkCount} chunks` : ""}
                     </span>
                   </div>
                   <div className="text-sm font-semibold text-slate-900 mt-1">{art.title}</div>
                 </button>
               );
             })}
+            {filteredArticles.length === 0 && (
+              <div className="px-4 py-8 text-center text-xs text-slate-500">
+                No guides matched your search. Try another keyword or clear filters.
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right: Selected Article & Section Chunks */}
+        {/* Right: Selected Article & Section Chunks / Guide Steps */}
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 space-y-5">
           {activeArticle ? (
             <>
@@ -357,9 +393,13 @@ export default function KnowledgeBaseView({
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono">
                   <span className="font-semibold text-[#0055A2]">{activeArticle.id}</span>
                   <span aria-hidden="true">·</span>
-                  <span>{activeArticle.category}</span>
-                  <span aria-hidden="true">·</span>
-                  <span className="tabular-nums">{activeArticleChunks.length} indexed chunks</span>
+                  <span>{activeArticle.category.replace(/_/g, " ")}</span>
+                  {isFaculty && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">{activeArticleChunks.length} indexed chunks</span>
+                    </>
+                  )}
                 </div>
                 <h2 className="font-display font-bold text-xl text-slate-900 mt-1">
                   {activeArticle.title}
@@ -367,10 +407,12 @@ export default function KnowledgeBaseView({
               </div>
 
               <div className="space-y-4">
-                <div className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                  <span>Indexed Section Chunks (## Markdown Split)</span>
-                </div>
+                {isFaculty && (
+                  <div className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                    <span>Indexed Section Chunks (## Markdown Split)</span>
+                  </div>
+                )}
                 {activeArticleChunks.map((chunk) => (
                   <div
                     key={chunk.chunk_id}
@@ -381,7 +423,9 @@ export default function KnowledgeBaseView({
                         <FileText className="w-3.5 h-3.5 text-[#0055A2]" aria-hidden="true" />
                         {chunk.section}
                       </span>
-                      <span className="font-mono text-slate-500">{chunk.chunk_id}</span>
+                      {isFaculty && (
+                        <span className="font-mono text-slate-500">{chunk.chunk_id}</span>
+                      )}
                     </div>
                     <p className="text-sm text-slate-700 leading-relaxed">{chunk.text}</p>
                   </div>
@@ -390,7 +434,7 @@ export default function KnowledgeBaseView({
             </>
           ) : (
             <div className="text-sm text-slate-500 py-10 text-center">
-              Select a knowledge base article to inspect its chunks.
+              Select a guide to view step-by-step instructions.
             </div>
           )}
         </div>

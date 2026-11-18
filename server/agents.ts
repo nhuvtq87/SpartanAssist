@@ -13,6 +13,7 @@ import {
 } from "./tools.ts";
 import type {
   Category,
+  ChatHistoryItem,
   HelpDeskState,
   RetrievedChunk,
   RunMode,
@@ -22,6 +23,18 @@ import type {
 } from "../src/types.ts";
 
 const CONFIDENCE_FLOOR = 0.55;
+const GEMINI_HTTP_TIMEOUT_MS = 15000;
+const GEMINI_TIMEOUT_MS = 10000;
+let geminiGenDisabledUntil = 0;
+
+function withTimeout<T>(promise: Promise<T>, ms = GEMINI_TIMEOUT_MS): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("Gemini request timed out")), ms)
+    ),
+  ]);
+}
 
 export function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -31,6 +44,7 @@ export function getGeminiClient(): GoogleGenAI | null {
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
+      timeout: GEMINI_HTTP_TIMEOUT_MS,
       headers: {
         "User-Agent": "aistudio-build",
       },
@@ -320,59 +334,106 @@ Workflow:
 - none: everything else
 Requests unrelated to campus IT -> category 'other'.`;
 
+async function classifyOfflineWithHistory(
+  query: string,
+  history: ChatHistoryItem[],
+  securityFix: boolean
+): Promise<IntakeOutput> {
+  const offline = await classifyOffline(query, { securityFix });
+  if (
+    offline.category === "other" &&
+    history.length > 0 &&
+    !HUMAN_CUES.some((c) => query.toLowerCase().includes(c))
+  ) {
+    const prevWithCategory = [...history].reverse().find((h) => h.category && h.category !== "other");
+    if (prevWithCategory?.category) {
+      const merged = await classifyOffline(`${prevWithCategory.text} ${query}`, { securityFix });
+      if (merged.category !== "other") {
+        return merged;
+      }
+    }
+  }
+  return offline;
+}
+
+function formatFallbackReason(rawMsg: string): string {
+  const lower = rawMsg.toLowerCase();
+  if (lower.includes("429") || lower.includes("resource_exhausted") || lower.includes("quota")) {
+    return "Gemini API free-tier quota exceeded (429); switched to instant offline classifier + TF-IDF RAG";
+  }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("high demand")) {
+    return "Gemini model experiencing temporary high demand (503); switched to instant offline classifier + TF-IDF RAG";
+  }
+  if (lower.includes("timed out")) {
+    return "Gemini API request timed out; switched to instant offline classifier + TF-IDF RAG";
+  }
+  return `${rawMsg.slice(0, 140)}; used offline classifier`;
+}
+
 async function intakeAgent(
   query: string,
   mode: RunMode,
   ai: GoogleGenAI | null,
-  securityFix: boolean
+  securityFix: boolean,
+  history: ChatHistoryItem[] = []
 ): Promise<{ result: IntakeOutput; fallback?: string; ms: number }> {
   const t0 = performance.now();
-  if (mode === "gemini" && ai) {
+  const recentContext = history
+    .slice(-4)
+    .map((h) => `${h.role === "user" ? "Student" : "Assistant"}: ${h.text}`)
+    .join("\n");
+  const promptInput = recentContext
+    ? `Recent conversation:\n${recentContext}\n\nLatest student message: ${query}`
+    : query;
+
+  if (mode === "gemini" && ai && Date.now() >= geminiGenDisabledUntil) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
-        contents: query,
-        config: {
-          systemInstruction: INTAKE_SYSTEM,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              category: {
-                type: Type.STRING,
-                enum: [
-                  "network",
-                  "authentication",
-                  "software",
-                  "hardware",
-                  "email",
-                  "printing",
-                  "learning_platform",
-                  "security",
-                  "other",
-                ],
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: promptInput,
+          config: {
+            systemInstruction: INTAKE_SYSTEM,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                category: {
+                  type: Type.STRING,
+                  enum: [
+                    "network",
+                    "authentication",
+                    "software",
+                    "hardware",
+                    "email",
+                    "printing",
+                    "learning_platform",
+                    "security",
+                    "other",
+                  ],
+                },
+                severity: { type: Type.STRING, enum: ["P1", "P2", "P3", "P4"] },
+                confidence: { type: Type.NUMBER },
+                intent: { type: Type.STRING },
+                workflow: {
+                  type: Type.STRING,
+                  enum: [
+                    "send_password_reset",
+                    "unlock_account",
+                    "run_network_diagnostics",
+                    "check_service_status",
+                    "check_license",
+                    "none",
+                  ],
+                },
+                wants_human: { type: Type.BOOLEAN },
               },
-              severity: { type: Type.STRING, enum: ["P1", "P2", "P3", "P4"] },
-              confidence: { type: Type.NUMBER },
-              intent: { type: Type.STRING },
-              workflow: {
-                type: Type.STRING,
-                enum: [
-                  "send_password_reset",
-                  "unlock_account",
-                  "run_network_diagnostics",
-                  "check_service_status",
-                  "check_license",
-                  "none",
-                ],
-              },
-              wants_human: { type: Type.BOOLEAN },
+              required: ["category", "severity", "confidence", "intent", "workflow", "wants_human"],
             },
-            required: ["category", "severity", "confidence", "intent", "workflow", "wants_human"],
           },
-        },
-      });
+        })
+      );
       const parsed = JSON.parse((response.text ?? "{}").trim()) as IntakeOutput;
       // Enforce security takeover safety net even in LLM mode
       const ql = query.toLowerCase();
@@ -392,17 +453,34 @@ async function intakeAgent(
         ms: Math.round((performance.now() - t0) * 100) / 100,
       };
     } catch (err) {
-      const offline = await classifyOffline(query, { securityFix });
+      const msg = err instanceof Error ? err.message : "Gemini Intake unavailable";
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes("timed out") ||
+        lower.includes("429") ||
+        lower.includes("resource_exhausted") ||
+        lower.includes("quota") ||
+        lower.includes("503") ||
+        lower.includes("unavailable") ||
+        lower.includes("high demand")
+      ) {
+        geminiGenDisabledUntil = Date.now() + 60_000;
+      }
+      const offline = await classifyOfflineWithHistory(query, history, securityFix);
       return {
         result: offline,
-        fallback: err instanceof Error ? err.message : "Gemini Intake unavailable, used offline classifier",
+        fallback: formatFallbackReason(msg),
         ms: Math.round((performance.now() - t0) * 100) / 100,
       };
     }
   }
-  const offline = await classifyOffline(query, { securityFix });
+  const offline = await classifyOfflineWithHistory(query, history, securityFix);
   return {
     result: offline,
+    fallback:
+      mode === "gemini" && Date.now() < geminiGenDisabledUntil
+        ? "Gemini quota/timeout cooldown active; using instant offline classifier + TF-IDF RAG"
+        : undefined,
     ms: Math.round((performance.now() - t0) * 100) / 100,
   };
 }
@@ -437,7 +515,8 @@ async function knowledgeAgent(
   category: Category,
   mode: RunMode,
   ai: GoogleGenAI | null,
-  precomputedGemini?: { queryVec: number[]; docVecs: number[][] } | null
+  precomputedGemini?: { queryVec: number[]; docVecs: number[][] } | null,
+  history: ChatHistoryItem[] = []
 ): Promise<{
   retrieved: RetrievedChunk[];
   grounded: boolean;
@@ -454,22 +533,28 @@ async function knowledgeAgent(
   let citations: string[] = [];
 
   if (hits.length > 0) {
-    if (mode === "gemini" && ai) {
+    if (mode === "gemini" && ai && Date.now() >= geminiGenDisabledUntil) {
       try {
         const ctx = hits.map((h) => `[${h.doc_id}] ${h.section}: ${h.text}`).join("\n\n");
+        const histText = history
+          .slice(-4)
+          .map((h) => `${h.role === "user" ? "Student" : "Assistant"}: ${h.text}`)
+          .join("\n");
         const prompt = `You are a helpful campus IT specialist at SpartanAssist. Answer ONLY from the context below using plain language (around an 8th-grade reading level).
 Lead with the fix: write short, numbered action steps (maximum 6 steps, one clear action per step).
 Cite the source inline like [KB-NET-01]. If the context does not answer the student's question, reply with exactly: NOT_IN_KB.
 
 Context:
 ${ctx}
-
+${histText ? `\nRecent conversation:\n${histText}\n` : ""}
 Student issue: ${query}`;
-        const resp = await ai.models.generateContent({
-          model: "gemini-4-hydrogen",
-          contents: prompt,
-          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
-        });
+        const resp = await withTimeout(
+          ai.models.generateContent({
+            model: "gemini-4-hydrogen",
+            contents: prompt,
+            config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+          })
+        );
         const text = (resp.text ?? "").trim();
         const foundCites = Array.from(new Set(text.match(/\[(KB-[A-Z]+-\d+)\]/g)?.map((m) => m.slice(1, -1)) ?? []));
         const retrievedIds = new Set(hits.map((h) => h.doc_id));
@@ -703,6 +788,9 @@ function responderNode(
   };
 }
 
+const GREETING_RE =
+  /^(hi|hello|hey|hey there|good morning|good afternoon|good evening|yo|sup|howdy|help|thanks|thank you|thx|who are you|what can you do|what can you help with)(\s+spartan\s*assist)?[!?. ]*$/i;
+
 // Orchestrator matching LangGraph conditional edges
 export async function runHelpDeskPipeline(
   rawQuery: string,
@@ -712,12 +800,14 @@ export async function runHelpDeskPipeline(
     forceHuman?: boolean;
     skipTicketWrite?: boolean;
     securityFix?: boolean;
+    history?: ChatHistoryItem[];
   }
 ): Promise<HelpDeskState> {
   const tStart = performance.now();
   const userId = options?.userId ?? "student_001";
   const skipTicketWrite = options?.skipTicketWrite ?? false;
   const securityFix = options?.securityFix ?? true;
+  const history = options?.history ?? [];
 
   const ai = getGeminiClient();
   const requestedMode = options?.mode ?? "auto";
@@ -738,10 +828,49 @@ export async function runHelpDeskPipeline(
   trace.push("privacy_guard");
   timings.privacy_guard = pg.ms;
 
+  // Conversational greeting / thanks fast-path (no bogus ticket created)
+  if (!options?.forceHuman && GREETING_RE.test(pg.query.trim())) {
+    const isThanks = /^(thanks|thank you|thx)/i.test(pg.query.trim());
+    const reply = isThanks
+      ? "You're welcome! Let me know if anything else comes up with Wi-Fi, VPN, Canvas, your account, software, or printing."
+      : "Hi! I'm SpartanAssist, your campus IT help desk assistant. Describe any issue in your own words—such as eduroam Wi-Fi drops, password resets, Duo MFA, Canvas, Office/Adobe licenses, or campus printing—and I'll help right away.";
+    const latency = Math.round((performance.now() - tStart) * 100) / 100;
+    return {
+      user_id: userId,
+      raw_query: rawQuery,
+      query: pg.query,
+      pii_found: pg.pii_found,
+      category: "other",
+      severity: "P4",
+      confidence: 0.95,
+      intent: "conversational_greeting",
+      workflow: "none",
+      wants_human: false,
+      retrieved: [],
+      grounded: true,
+      answer: reply,
+      steps: [],
+      citations: [],
+      escalated: false,
+      status: "resolved",
+      final_response: reply,
+      trace: ["privacy_guard", "responder"],
+      timings: { privacy_guard: pg.ms, responder: latency },
+      latency_ms: latency,
+      mode_used: modeUsed,
+      is_conversational: true,
+    };
+  }
+
   // Node 2: Intake Agent (run Gemini query embedding in parallel to eliminate serial wait)
+  const effectiveModeForGemini =
+    modeUsed === "gemini" && ai && Date.now() < geminiGenDisabledUntil ? "offline" : modeUsed;
+
   const [intake, precomputedGemini] = await Promise.all([
-    intakeAgent(pg.query, modeUsed, ai, securityFix),
-    modeUsed === "gemini" && ai ? embedQueryForKB(pg.query, ai) : Promise.resolve(null),
+    intakeAgent(pg.query, modeUsed, ai, securityFix, history),
+    effectiveModeForGemini === "gemini" && ai
+      ? embedQueryForKB(pg.query, ai)
+      : Promise.resolve(null),
   ]);
   trace.push("intake");
   timings.intake = intake.ms;
@@ -782,9 +911,10 @@ export async function runHelpDeskPipeline(
     const kn = await knowledgeAgent(
       state.query,
       state.category,
-      modeUsed,
+      state.mode_used,
       ai,
-      precomputedGemini
+      precomputedGemini,
+      history
     );
     state.retrieved = kn.retrieved;
     state.grounded = kn.grounded;

@@ -45,12 +45,14 @@ async function startServer() {
       const mode = (req.body?.mode as RunMode | "auto") ?? "auto";
       const forceHuman = Boolean(req.body?.forceHuman);
       const securityFix = req.body?.securityFix !== false;
+      const history = Array.isArray(req.body?.history) ? req.body.history : [];
 
       const result = await runHelpDeskPipeline(query, {
         userId,
         mode,
         forceHuman,
         securityFix,
+        history,
       });
       res.json(result);
     } catch (err) {
