@@ -12,9 +12,55 @@ import {
   updateTicket,
 } from "./server/tools.ts";
 import { runValidationSuite } from "./server/validation.ts";
-import type { RunMode, Severity, Ticket } from "./src/types.ts";
+import { maskSensitiveText, type SensitiveCategory } from "./src/lib/privacy.ts";
+import type { ChatHistoryItem, RunMode, Severity, Ticket } from "./src/types.ts";
 
 const PORT = 3000;
+
+const ALLOWED_SENSITIVE_CATEGORIES = new Set<SensitiveCategory>([
+  "private_key",
+  "jwt_token",
+  "api_key",
+  "access_token",
+  "credit_card",
+  "bank_account",
+  "ssn",
+  "password",
+  "email",
+  "phone",
+  "student_id",
+]);
+
+function getServerSecrets(): string[] {
+  const key = process.env.GEMINI_API_KEY;
+  return key && key !== "MY_GEMINI_API_KEY" && key.trim().length >= 8 ? [key.trim()] : [];
+}
+
+function sanitizeText(value: string): string {
+  return maskSensitiveText(value, getServerSecrets()).masked;
+}
+
+function sanitizeUnknown(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizeText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeUnknown(item));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeUnknown(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function sanitizeError(err: unknown, fallback: string): string {
+  const msg = err instanceof Error ? err.message : fallback;
+  return sanitizeText(msg);
+}
 
 async function startServer() {
   const app = express();
@@ -36,28 +82,53 @@ async function startServer() {
 
   app.post("/api/chat", async (req, res) => {
     try {
-      const query = String(req.body?.query ?? "").trim();
-      if (!query) {
+      const rawQuery = String(req.body?.query ?? "").trim();
+      if (!rawQuery) {
         res.status(400).json({ error: "Query is required" });
         return;
       }
-      const userId = String(req.body?.userId ?? "student_001");
+      const secrets = getServerSecrets();
+      const maskedQuery = maskSensitiveText(rawQuery, secrets);
+      const userId = sanitizeText(String(req.body?.userId ?? "student_001"));
       const mode = (req.body?.mode as RunMode | "auto") ?? "auto";
       const forceHuman = Boolean(req.body?.forceHuman);
       const securityFix = req.body?.securityFix !== false;
-      const history = Array.isArray(req.body?.history) ? req.body.history : [];
 
-      const result = await runHelpDeskPipeline(query, {
+      const rawHistory: unknown[] = Array.isArray(req.body?.history) ? req.body.history : [];
+      const history: ChatHistoryItem[] = rawHistory
+        .filter((h): h is ChatHistoryItem => Boolean(h && typeof h === "object"))
+        .map((h) => ({
+          role: h.role === "assistant" ? "assistant" : "user",
+          text: sanitizeText(String(h.text ?? "")),
+          category: h.category,
+          citations: Array.isArray(h.citations) ? h.citations : undefined,
+        }));
+
+      const rawClientPii = Array.isArray(req.body?.clientDetectedPii)
+        ? req.body.clientDetectedPii
+        : [];
+      const clientDetectedPii = Array.from(
+        new Set([
+          ...rawClientPii.filter(
+            (t: unknown): t is SensitiveCategory =>
+              typeof t === "string" && ALLOWED_SENSITIVE_CATEGORIES.has(t as SensitiveCategory)
+          ),
+          ...maskedQuery.detectedTypes,
+        ])
+      );
+
+      const result = await runHelpDeskPipeline(maskedQuery.masked, {
         userId,
         mode,
         forceHuman,
         securityFix,
         history,
+        clientDetectedPii,
       });
       res.json(result);
     } catch (err) {
       res.status(500).json({
-        error: err instanceof Error ? err.message : "Failed to run help desk pipeline",
+        error: sanitizeError(err, "Failed to run help desk pipeline"),
       });
     }
   });
@@ -70,16 +141,16 @@ async function startServer() {
   });
 
   app.post("/api/tickets", (req, res) => {
-    const user = String(req.body?.user ?? "student_001");
-    const category = String(req.body?.category ?? "other");
+    const user = sanitizeText(String(req.body?.user ?? "student_001"));
+    const category = sanitizeText(String(req.body?.category ?? "other"));
     const priority = (req.body?.priority as Severity) ?? "P3";
-    const summary = String(req.body?.summary ?? "").trim();
+    const summary = sanitizeText(String(req.body?.summary ?? "").trim());
     if (!summary) {
       res.status(400).json({ error: "Summary is required" });
       return;
     }
     const status = (req.body?.status as Ticket["status"]) ?? "open";
-    const notes = req.body?.notes ? String(req.body.notes) : "";
+    const notes = req.body?.notes ? sanitizeText(String(req.body.notes)) : "";
     const created = createTicket({ user, category, priority, summary, status, notes });
     res.json(created);
   });
@@ -91,18 +162,19 @@ async function startServer() {
       res.status(400).json({ error: "Status is required" });
       return;
     }
-    const notes = req.body?.notes !== undefined ? String(req.body.notes) : undefined;
+    const notes = req.body?.notes !== undefined ? sanitizeText(String(req.body.notes)) : undefined;
     const csat = req.body?.csat !== undefined ? Number(req.body.csat) : undefined;
     const updated = updateTicket(id, status, notes, csat);
     if (!updated.success) {
-      res.status(404).json({ error: `Ticket ${id} not found` });
+      res.status(404).json({ error: `Ticket ${sanitizeText(id)} not found` });
       return;
     }
     res.json(updated);
   });
 
   app.get("/api/kb", async (req, res) => {
-    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const rawQ = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const q = rawQ ? sanitizeText(rawQ) : "";
     const category = typeof req.query.category === "string" ? req.query.category : undefined;
     const requestedMode = (req.query.mode as RunMode | "auto") ?? "offline";
     const ai = getGeminiClient();
@@ -134,14 +206,18 @@ async function startServer() {
 
   app.post("/api/mcp/call", (req, res) => {
     try {
-      const name = String(req.body?.name ?? "");
-      const args = (req.body?.arguments ?? {}) as Record<string, unknown>;
+      const name = sanitizeText(String(req.body?.name ?? ""));
+      const rawArgs =
+        req.body?.arguments && typeof req.body.arguments === "object"
+          ? (req.body.arguments as Record<string, unknown>)
+          : {};
+      const args = sanitizeUnknown(rawArgs) as Record<string, unknown>;
       const output = callMcpTool(name, args);
       res.json({ ok: true, tool: name, result: output });
     } catch (err) {
       res.status(400).json({
         ok: false,
-        error: err instanceof Error ? err.message : "MCP call failed",
+        error: sanitizeError(err, "MCP call failed"),
       });
     }
   });
@@ -158,7 +234,7 @@ async function startServer() {
       res.json(data);
     } catch (err) {
       res.status(500).json({
-        error: err instanceof Error ? err.message : "Validation run failed",
+        error: sanitizeError(err, "Validation run failed"),
       });
     }
   });

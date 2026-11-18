@@ -23,6 +23,7 @@ import {
   Printer,
   X,
 } from "lucide-react";
+import { formatSensitiveLabels, maskSensitiveText } from "../lib/privacy";
 import type { ChatHistoryItem, HelpDeskState, KBArticle, RunMode } from "../types";
 
 interface ChatTurn {
@@ -152,6 +153,7 @@ export default function HelpChatView({
 
   const activeTurn = turns.find((t) => t.id === activeTurnId) ?? turns[turns.length - 1] ?? null;
   const allOperational = Object.values(services).every((s) => s === "operational");
+  const livePrivacy = maskSensitiveText(input);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -168,15 +170,18 @@ export default function HelpChatView({
     const trimmed = rawQuery.trim();
     if (!trimmed || loading) return;
 
+    const maskedInput = maskSensitiveText(trimmed);
+    const safeQuery = maskedInput.masked;
+
     setLoading(true);
     setError(null);
     setInput("");
 
     const history: ChatHistoryItem[] = turns.slice(-4).flatMap((t) => [
-      { role: "user", text: t.state.query, category: t.state.category },
+      { role: "user", text: maskSensitiveText(t.state.query).masked, category: t.state.category },
       {
         role: "assistant",
-        text: t.state.final_response || t.state.answer,
+        text: maskSensitiveText(t.state.final_response || t.state.answer).masked,
         category: t.state.category,
         citations: t.state.citations,
       },
@@ -191,7 +196,8 @@ export default function HelpChatView({
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          query: trimmed,
+          query: safeQuery,
+          clientDetectedPii: maskedInput.detectedTypes,
           userId: "student_001",
           mode,
           forceHuman,
@@ -200,17 +206,19 @@ export default function HelpChatView({
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Request failed (${res.status})`);
+        const rawErrMsg = errData.error || `Request failed (${res.status})`;
+        throw new Error(maskSensitiveText(String(rawErrMsg)).masked);
       }
       const data: HelpDeskState = await res.json();
       const id = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      setTurns((prev) => [...prev, { id, rawInput: trimmed, state: data }]);
+      setTurns((prev) => [...prev, { id, rawInput: safeQuery, state: data }]);
       setActiveTurnId(id);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError("Request took too long. Try switching Engine to Offline Rules + TF-IDF or resend.");
       } else {
-        setError(err instanceof Error ? err.message : "Unable to process request");
+        const msg = err instanceof Error ? err.message : "Unable to process request";
+        setError(maskSensitiveText(msg).masked);
       }
     } finally {
       window.clearTimeout(timer);
@@ -222,6 +230,8 @@ export default function HelpChatView({
     const turn = turns.find((t) => t.id === turnId);
     if (!turn) return;
 
+    const safeIssue = maskSensitiveText(turn.state.query).masked;
+
     if (turn.state.ticket_id) {
       try {
         await fetch(`/api/tickets/${turn.state.ticket_id}`, {
@@ -232,7 +242,7 @@ export default function HelpChatView({
               ? { status: "resolved", notes: "Confirmed fixed by student", csat: 5 }
               : {
                   status: "escalated",
-                  notes: `Student clicked 'No, get a person' after AI steps. Issue: ${turn.state.query}`,
+                  notes: `Student clicked 'No, get a person' after AI steps. Issue: ${safeIssue}`,
                   csat: 3,
                 }
           ),
@@ -289,7 +299,7 @@ export default function HelpChatView({
       return;
     }
     submitQuery(
-      `I need to talk to a real person about my previous issue: ${last.state.query}`,
+      `I need to talk to a real person about my previous issue: ${maskSensitiveText(last.state.query).masked}`,
       true
     );
   }
@@ -439,8 +449,9 @@ export default function HelpChatView({
                 <p className="text-xs text-slate-500 leading-relaxed flex items-start gap-2">
                   <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>
-                    Never type your password here. I hide student IDs, emails, phone numbers, and
-                    passwords automatically before any model or ticket sees them.
+                    Never share confidential credentials here. Passwords, SSNs, credit cards, bank
+                    accounts, API keys, access tokens, emails, phone numbers, and student IDs are
+                    automatically masked before displaying, storing, logging, or processing.
                   </span>
                 </p>
               </div>
@@ -773,8 +784,9 @@ export default function HelpChatView({
                         <div className="bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-600 flex items-start gap-2.5">
                           <Lock className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" aria-hidden="true" />
                           <span>
-                            I hid the personal details you typed ({s.pii_found.join(", ")}). Never
-                            share passwords, including with me.
+                            I masked sensitive details you typed ({formatSensitiveLabels(s.pii_found)}
+                            ) before displaying, saving, or sending to any model. Never share
+                            passwords, SSNs, financial info, or API keys.
                           </span>
                         </div>
                       )}
@@ -812,6 +824,21 @@ export default function HelpChatView({
             }}
             className="p-4 bg-white border-t border-slate-200 space-y-2.5"
           >
+            {livePrivacy.hasSensitive && (
+              <div
+                role="status"
+                className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+                <span>
+                  Privacy Guard detected{" "}
+                  <strong className="font-semibold">
+                    {formatSensitiveLabels(livePrivacy.detectedTypes)}
+                  </strong>{" "}
+                  — values will be masked automatically before sending or storing.
+                </span>
+              </div>
+            )}
             <div className="flex items-center gap-2.5">
               <input
                 ref={inputRef}

@@ -1,7 +1,48 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { maskSensitiveText } from "../src/lib/privacy.ts";
 import type { MCPToolDefinition, Severity, Ticket, WorkflowResult } from "../src/types.ts";
+
+function getServerSecrets(): string[] {
+  const key = process.env.GEMINI_API_KEY;
+  return key && key !== "MY_GEMINI_API_KEY" && key.trim().length >= 8 ? [key.trim()] : [];
+}
+
+function sanitizeText(value: string): string {
+  return maskSensitiveText(value, getServerSecrets()).masked;
+}
+
+function scrubTicket(ticket: Ticket): { ticket: Ticket; changed: boolean } {
+  const user = sanitizeText(ticket.user ?? "");
+  const summary = sanitizeText(ticket.summary ?? "");
+  const notes = sanitizeText(ticket.notes ?? "");
+  const reasons = ticket.escalation_reasons?.map((r) => sanitizeText(r));
+  const reasonsChanged =
+    Boolean(reasons) &&
+    reasons!.some((r, idx) => r !== ticket.escalation_reasons?.[idx]);
+
+  const changed =
+    user !== ticket.user ||
+    summary !== ticket.summary ||
+    notes !== ticket.notes ||
+    reasonsChanged;
+
+  if (!changed) {
+    return { ticket, changed: false };
+  }
+
+  return {
+    ticket: {
+      ...ticket,
+      user,
+      summary,
+      notes,
+      ...(reasons ? { escalation_reasons: reasons } : {}),
+    },
+    changed: true,
+  };
+}
 
 export const SLA_BY_PRIORITY: Record<string, string> = {
   P1: "15 minutes",
@@ -37,7 +78,7 @@ function ensureStore(): Ticket[] {
         user: "student_103",
         category: "authentication",
         priority: "P1",
-        summary: "My account says DISABLED and my online final exam starts in 20 minutes! My ID is [STUDENT_ID]",
+        summary: "My account says DISABLED and my online final exam starts in 20 minutes! My ID is *****2233",
         status: "escalated",
         team: "accounts",
         notes: "P1 authentication case for student_103. Escalated because: P1 severity. Administrative hold requires Accounts team review.",
@@ -51,7 +92,7 @@ function ensureStore(): Ticket[] {
         user: "student_104",
         category: "security",
         priority: "P1",
-        summary: "I clicked a link in an email and typed my password on a weird login page. My password [REDACTED]",
+        summary: "I clicked a link in an email and typed my password on a weird login page. My password is *******",
         status: "escalated",
         team: "security_ops",
         notes: "P1 security case for student_104. Possible account compromise; escalated to Security Ops via 24/7 phone line.",
@@ -93,7 +134,17 @@ function ensureStore(): Ticket[] {
   }
   try {
     const raw = fs.readFileSync(TICKETS_FILE, "utf8");
-    return JSON.parse(raw) as Ticket[];
+    const parsed = JSON.parse(raw) as Ticket[];
+    let anyChanged = false;
+    const scrubbed = parsed.map((t) => {
+      const res = scrubTicket(t);
+      if (res.changed) anyChanged = true;
+      return res.ticket;
+    });
+    if (anyChanged) {
+      fs.writeFileSync(TICKETS_FILE, JSON.stringify(scrubbed, null, 2), "utf8");
+    }
+    return scrubbed;
   } catch {
     return [];
   }
@@ -126,9 +177,14 @@ export function createTicket(params: {
   escalation_reasons?: string[];
 }): { success: true; ticket_id: string; status: Ticket["status"]; team: string; sla: string } {
   const tickets = ensureStore();
+  const safeUser = sanitizeText(params.user);
+  const safeSummary = sanitizeText(params.summary);
+  const safeNotes = sanitizeText(params.notes ?? "");
+  const safeReasons = params.escalation_reasons?.map((r) => sanitizeText(r));
+
   const hash = crypto
     .createHash("md5")
-    .update(`${params.user}${params.summary}${Date.now()}${Math.random()}`)
+    .update(`${safeUser}${safeSummary}${Date.now()}${Math.random()}`)
     .digest("hex")
     .slice(0, 5)
     .toUpperCase();
@@ -140,16 +196,16 @@ export function createTicket(params: {
   const ticket: Ticket = {
     id: tid,
     created: new Date().toISOString().slice(0, 19),
-    user: params.user,
+    user: safeUser,
     category: params.category,
     priority: params.priority,
-    summary: params.summary,
+    summary: safeSummary,
     status,
     team,
-    notes: params.notes ?? "",
+    notes: safeNotes,
     sla,
     trace: params.trace,
-    escalation_reasons: params.escalation_reasons,
+    escalation_reasons: safeReasons,
   };
 
   tickets.unshift(ticket);
@@ -166,7 +222,7 @@ export function updateTicket(
   const tickets = ensureStore();
   const target = tickets.find((t) => t.id === ticketId);
   if (!target) {
-    return { success: false, ticket_id: ticketId, status };
+    return { success: false, ticket_id: sanitizeText(ticketId), status };
   }
   target.status = status;
   if ((status === "resolved" || status === "closed") && !target.resolved_at) {
@@ -179,7 +235,7 @@ export function updateTicket(
     }
   }
   if (notes !== undefined && notes !== "") {
-    target.notes = notes;
+    target.notes = sanitizeText(notes);
   }
   if (csat !== undefined) {
     target.csat = csat;
@@ -274,6 +330,7 @@ export function checkServiceStatus(_service = "all"): WorkflowResult {
 }
 
 export function checkLicense(_user: string, product: string): WorkflowResult {
+  const safeProduct = sanitizeText(product);
   const entitled = new Set([
     "microsoft 365",
     "office",
@@ -281,15 +338,15 @@ export function checkLicense(_user: string, product: string): WorkflowResult {
     "adobe creative cloud",
     "spss",
     "tableau",
-  ]).has(product.toLowerCase());
+  ]).has(safeProduct.toLowerCase());
   return {
     success: true,
     action: "license_check",
-    product,
+    product: safeProduct,
     entitled,
     message: entitled
-      ? `You are licensed for ${product}.`
-      : `No license found for ${product}; request it in the software portal.`,
+      ? `You are licensed for ${safeProduct}.`
+      : `No license found for ${safeProduct}; request it in the software portal.`,
   };
 }
 
@@ -394,43 +451,44 @@ export const MCP_TOOLS: MCPToolDefinition[] = [
 ];
 
 export function callMcpTool(name: string, args: Record<string, unknown>): unknown {
-  switch (name) {
+  const safeName = sanitizeText(name);
+  switch (safeName) {
     case "create_ticket":
       return createTicket({
-        user: String(args.user ?? "staff_demo"),
-        category: String(args.category ?? "network"),
+        user: sanitizeText(String(args.user ?? "staff_demo")),
+        category: sanitizeText(String(args.category ?? "network")),
         priority: (String(args.priority ?? "P3") as Severity) || "P3",
-        summary: String(args.summary ?? "Created from MCP tool inspector"),
+        summary: sanitizeText(String(args.summary ?? "Created from MCP tool inspector")),
       });
     case "update_ticket":
       return updateTicket(
-        String(args.ticket_id ?? ""),
+        sanitizeText(String(args.ticket_id ?? "")),
         (String(args.status ?? "open") as Ticket["status"]) || "open",
-        args.notes !== undefined ? String(args.notes) : undefined
+        args.notes !== undefined ? sanitizeText(String(args.notes)) : undefined
       );
     case "list_tickets":
       return listTickets({
-        status: args.status ? String(args.status) : undefined,
-        priority: args.priority ? String(args.priority) : undefined,
+        status: args.status ? sanitizeText(String(args.status)) : undefined,
+        priority: args.priority ? sanitizeText(String(args.priority)) : undefined,
         limit: args.limit !== undefined ? Number(args.limit) : 20,
       });
     case "send_password_reset":
-      return sendPasswordReset(String(args.user ?? "student_001"));
+      return sendPasswordReset(sanitizeText(String(args.user ?? "student_001")));
     case "unlock_account":
-      return unlockAccount(String(args.user ?? "student_001"));
+      return unlockAccount(sanitizeText(String(args.user ?? "student_001")));
     case "run_network_diagnostics":
       return runNetworkDiagnostics(
-        String(args.user ?? "student_001"),
-        String(args.building ?? "unknown")
+        sanitizeText(String(args.user ?? "student_001")),
+        sanitizeText(String(args.building ?? "unknown"))
       );
     case "check_service_status":
-      return checkServiceStatus(String(args.service ?? "all"));
+      return checkServiceStatus(sanitizeText(String(args.service ?? "all")));
     case "check_license":
       return checkLicense(
-        String(args.user ?? "student_001"),
-        String(args.product ?? "Microsoft 365")
+        sanitizeText(String(args.user ?? "student_001")),
+        sanitizeText(String(args.product ?? "Microsoft 365"))
       );
     default:
-      throw new Error(`Unknown MCP tool: ${name}`);
+      throw new Error(`Unknown MCP tool: ${safeName}`);
   }
 }

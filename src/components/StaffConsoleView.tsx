@@ -14,8 +14,36 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { maskSensitiveText } from "../lib/privacy";
 import type { MCPToolDefinition, Severity, Ticket } from "../types";
 import StaffAnalyticsDashboard from "./StaffAnalyticsDashboard";
+
+function sanitizeUnknownClient(value: unknown): unknown {
+  if (typeof value === "string") {
+    return maskSensitiveText(value).masked;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeUnknownClient(item));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeUnknownClient(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function sanitizeTicketForDisplay(ticket: Ticket): Ticket {
+  return {
+    ...ticket,
+    user: maskSensitiveText(ticket.user ?? "").masked,
+    summary: maskSensitiveText(ticket.summary ?? "").masked,
+    notes: maskSensitiveText(ticket.notes ?? "").masked,
+    escalation_reasons: ticket.escalation_reasons?.map((r) => maskSensitiveText(r).masked),
+  };
+}
 
 type PriorityLevel = "High" | "Medium" | "Low";
 
@@ -62,25 +90,26 @@ function buildTicketsCsv(rows: Ticket[]): string {
   ];
   const lines = [
     headers.join(","),
-    ...rows.map((t) =>
-      [
-        t.id,
-        t.created,
-        t.user,
-        t.priority,
-        t.status,
-        t.category,
-        t.team,
-        t.sla,
-        t.summary,
-        t.notes,
-        t.csat ?? "",
-        (t.escalation_reasons ?? []).join("; "),
-        (t.trace ?? []).join(" -> "),
+    ...rows.map((t) => {
+      const safe = sanitizeTicketForDisplay(t);
+      return [
+        safe.id,
+        safe.created,
+        safe.user,
+        safe.priority,
+        safe.status,
+        safe.category,
+        safe.team,
+        safe.sla,
+        safe.summary,
+        safe.notes,
+        safe.csat ?? "",
+        (safe.escalation_reasons ?? []).join("; "),
+        (safe.trace ?? []).join(" -> "),
       ]
         .map(escapeCsvCell)
-        .join(",")
-    ),
+        .join(",");
+    }),
   ];
   return `\uFEFF${lines.join("\r\n")}`;
 }
@@ -129,7 +158,7 @@ export default function StaffConsoleView({ refreshTrigger = 0 }: StaffConsoleVie
     try {
       const res = await fetch("/api/tickets?limit=100");
       const data = await res.json();
-      const list: Ticket[] = data.tickets ?? [];
+      const list: Ticket[] = (data.tickets ?? []).map(sanitizeTicketForDisplay);
       setTickets(list);
       if (!selectedTicketId && list.length > 0) {
         setSelectedTicketId(list[0].id);
@@ -196,20 +225,26 @@ export default function StaffConsoleView({ refreshTrigger = 0 }: StaffConsoleVie
     setToolOutput("");
     try {
       const parsed = JSON.parse(toolArgsText || "{}");
+      const sanitizedArgs = sanitizeUnknownClient(parsed);
+      const maskedArgsText = JSON.stringify(sanitizedArgs, null, 2);
+      if (maskedArgsText !== toolArgsText) {
+        setToolArgsText(maskedArgsText);
+      }
       const res = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: selectedTool, arguments: parsed }),
+        body: JSON.stringify({ name: selectedTool, arguments: sanitizedArgs }),
       });
       const data = await res.json();
-      setToolOutput(JSON.stringify(data, null, 2));
+      setToolOutput(JSON.stringify(sanitizeUnknownClient(data), null, 2));
       if (["create_ticket", "update_ticket"].includes(selectedTool)) {
         await fetchTickets();
       }
     } catch (err) {
+      const rawErr = err instanceof Error ? err.message : "Invalid JSON arguments";
       setToolOutput(
         JSON.stringify(
-          { ok: false, error: err instanceof Error ? err.message : "Invalid JSON arguments" },
+          { ok: false, error: maskSensitiveText(rawErr).masked },
           null,
           2
         )
@@ -256,20 +291,24 @@ export default function StaffConsoleView({ refreshTrigger = 0 }: StaffConsoleVie
     if (filteredTickets.length === 0) return;
     const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
     const filename = `spartanassist-tickets-${stamp}.${format}`;
+    const safeTickets = filteredTickets.map(sanitizeTicketForDisplay);
 
     if (format === "csv") {
-      const csv = buildTicketsCsv(filteredTickets);
+      const csv = buildTicketsCsv(safeTickets);
       triggerFileDownload(csv, filename, "text/csv;charset=utf-8;");
     } else {
+      const safeSearch = searchText.trim()
+        ? maskSensitiveText(searchText.trim()).masked
+        : null;
       const payload = {
         exported_at: new Date().toISOString(),
         filters: {
           status: statusFilter,
           priority: priorityFilter,
-          search: searchText.trim() || null,
+          search: safeSearch,
         },
-        count: filteredTickets.length,
-        tickets: filteredTickets,
+        count: safeTickets.length,
+        tickets: safeTickets,
       };
       triggerFileDownload(
         JSON.stringify(payload, null, 2),

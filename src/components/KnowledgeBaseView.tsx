@@ -8,6 +8,7 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
+import { maskSensitiveText } from "../lib/privacy";
 import type { KBArticle, KBChunk, RetrievedChunk, RunMode } from "../types";
 
 interface KnowledgeBaseViewProps {
@@ -81,9 +82,13 @@ export default function KnowledgeBaseView({
   async function runRagTest(q: string, catHint: string, testMode: RunMode) {
     const trimmed = q.trim();
     if (!trimmed) return;
+    const safeQuery = maskSensitiveText(trimmed).masked;
+    if (safeQuery !== q) {
+      setRagQuery(safeQuery);
+    }
     setRagLoading(true);
     try {
-      const params = new URLSearchParams({ q: trimmed, mode: testMode });
+      const params = new URLSearchParams({ q: safeQuery, mode: testMode });
       if (catHint) params.set("category", catHint);
       const res = await fetch(`/api/kb?${params.toString()}`);
       const data = await res.json();
@@ -345,7 +350,7 @@ export default function KnowledgeBaseView({
               <input
                 type="text"
                 value={articleSearch}
-                onChange={(e) => setArticleSearch(e.target.value)}
+                onChange={(e) => setArticleSearch(maskSensitiveText(e.target.value).masked)}
                 placeholder={isFaculty ? "Filter articles..." : "Search guides (e.g. eduroam, Duo, Adobe)..."}
                 aria-label="Search guides"
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#0055A2] focus:bg-white"

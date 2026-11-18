@@ -1,5 +1,6 @@
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import { embedQueryForKB, retrieveKB } from "./kb.ts";
+import { formatSensitiveLabels, maskSensitiveText } from "../src/lib/privacy.ts";
 import {
   checkLicense,
   checkServiceStatus,
@@ -52,36 +53,22 @@ export function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
-// 1. Privacy Guard
-const PII_RULES: Array<{ label: string; regex: RegExp; isPassword?: boolean }> = [
-  { label: "student_id", regex: /\b0\d{8}\b|\b\d{9}\b/g },
-  { label: "email", regex: /[\w.+-]+@[\w-]+\.[\w.]+/g },
-  { label: "phone", regex: /\(?\b\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
-  { label: "password", regex: /(password|passcode|pwd)\s*(is|=|:)\s*\S+/gi, isPassword: true },
-];
+function getServerSecrets(): string[] {
+  const key = process.env.GEMINI_API_KEY;
+  return key && key !== "MY_GEMINI_API_KEY" && key.trim().length >= 8 ? [key.trim()] : [];
+}
 
+// 1. Privacy Guard
 export function privacyGuard(rawQuery: string): {
   query: string;
   pii_found: string[];
   ms: number;
 } {
   const t0 = performance.now();
-  let text = rawQuery;
-  const found: string[] = [];
-  for (const rule of PII_RULES) {
-    if (rule.regex.test(text)) {
-      found.push(rule.label);
-      rule.regex.lastIndex = 0;
-      if (rule.isPassword) {
-        text = text.replace(rule.regex, (_m, p1) => `${p1} [REDACTED]`);
-      } else {
-        text = text.replace(rule.regex, `[${rule.label.toUpperCase()}]`);
-      }
-    }
-  }
+  const res = maskSensitiveText(rawQuery, getServerSecrets());
   return {
-    query: text,
-    pii_found: found,
+    query: res.masked,
+    pii_found: res.detectedTypes,
     ms: Math.round((performance.now() - t0) * 100) / 100,
   };
 }
@@ -357,7 +344,8 @@ async function classifyOfflineWithHistory(
 }
 
 function formatFallbackReason(rawMsg: string): string {
-  const lower = rawMsg.toLowerCase();
+  const safeMsg = maskSensitiveText(rawMsg, getServerSecrets()).masked;
+  const lower = safeMsg.toLowerCase();
   if (lower.includes("429") || lower.includes("resource_exhausted") || lower.includes("quota")) {
     return "Gemini API free-tier quota exceeded (429); switched to instant offline classifier + TF-IDF RAG";
   }
@@ -367,7 +355,7 @@ function formatFallbackReason(rawMsg: string): string {
   if (lower.includes("timed out")) {
     return "Gemini API request timed out; switched to instant offline classifier + TF-IDF RAG";
   }
-  return `${rawMsg.slice(0, 140)}; used offline classifier`;
+  return `${safeMsg.slice(0, 140)}; used offline classifier`;
 }
 
 async function intakeAgent(
@@ -555,7 +543,7 @@ Student issue: ${query}`;
             config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
           })
         );
-        const text = (resp.text ?? "").trim();
+        const text = maskSensitiveText((resp.text ?? "").trim(), getServerSecrets()).masked;
         const foundCites = Array.from(new Set(text.match(/\[(KB-[A-Z]+-\d+)\]/g)?.map((m) => m.slice(1, -1)) ?? []));
         const retrievedIds = new Set(hits.map((h) => h.doc_id));
         const allValid = foundCites.length > 0 && foundCites.every((c) => retrievedIds.has(c));
@@ -777,7 +765,7 @@ function responderNode(
   }
   if (state.pii_found && state.pii_found.length > 0) {
     parts.push(
-      `I hid personal details you typed (${state.pii_found.join(", ")}) — never share your password with anyone, including me.`
+      `I masked sensitive details you typed (${formatSensitiveLabels(state.pii_found)}) before processing or saving — never share passwords, SSNs, financial info, or API keys.`
     );
   }
 
@@ -801,13 +789,18 @@ export async function runHelpDeskPipeline(
     skipTicketWrite?: boolean;
     securityFix?: boolean;
     history?: ChatHistoryItem[];
+    clientDetectedPii?: string[];
   }
 ): Promise<HelpDeskState> {
   const tStart = performance.now();
-  const userId = options?.userId ?? "student_001";
+  const secrets = getServerSecrets();
+  const userId = maskSensitiveText(options?.userId ?? "student_001", secrets).masked;
   const skipTicketWrite = options?.skipTicketWrite ?? false;
   const securityFix = options?.securityFix ?? true;
-  const history = options?.history ?? [];
+  const history = (options?.history ?? []).map((h) => ({
+    ...h,
+    text: maskSensitiveText(h.text, secrets).masked,
+  }));
 
   const ai = getGeminiClient();
   const requestedMode = options?.mode ?? "auto";
@@ -823,8 +816,14 @@ export async function runHelpDeskPipeline(
   const trace: string[] = [];
   const timings: Record<string, number> = {};
 
-  // Node 1: Privacy Guard
+  // Node 1: Privacy Guard (mask immediately; never retain rawQuery in state, logs, or responses)
   const pg = privacyGuard(rawQuery);
+  const mergedPii = Array.from(
+    new Set([
+      ...(Array.isArray(options?.clientDetectedPii) ? options.clientDetectedPii : []),
+      ...pg.pii_found,
+    ])
+  );
   trace.push("privacy_guard");
   timings.privacy_guard = pg.ms;
 
@@ -837,9 +836,9 @@ export async function runHelpDeskPipeline(
     const latency = Math.round((performance.now() - tStart) * 100) / 100;
     return {
       user_id: userId,
-      raw_query: rawQuery,
+      raw_query: pg.query,
       query: pg.query,
-      pii_found: pg.pii_found,
+      pii_found: mergedPii,
       category: "other",
       severity: "P4",
       confidence: 0.95,
@@ -880,13 +879,13 @@ export async function runHelpDeskPipeline(
 
   const state: HelpDeskState = {
     user_id: userId,
-    raw_query: rawQuery,
+    raw_query: pg.query,
     query: pg.query,
-    pii_found: pg.pii_found,
+    pii_found: mergedPii,
     category: intake.result.category,
     severity: intake.result.severity,
     confidence: intake.result.confidence,
-    intent: intake.result.intent,
+    intent: maskSensitiveText(intake.result.intent, secrets).masked,
     workflow: intake.result.workflow,
     wants_human: intake.result.wants_human,
     retrieved: [],
