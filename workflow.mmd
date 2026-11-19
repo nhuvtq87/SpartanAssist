@@ -1,0 +1,36 @@
+%% SpartanAssist workflow: one user request, two outcomes
+sequenceDiagram
+    autonumber
+    actor S as Student
+    participant PG as Privacy Guard
+    participant IN as Intake
+    participant KN as Knowledge (RAG)
+    participant WF as Workflow
+    participant M as MCP tool server
+    participant ES as Escalation
+    participant RS as Responder
+    actor T as IT staff
+
+    S->>PG: "Library Wi-Fi keeps disconnecting"
+    PG->>IN: redacted message (PII hidden)
+    IN->>IN: category = network, P3, action = diagnostics
+    IN->>KN: IT issue
+    KN->>KN: top-2 chunks above floor, cite KB-NET-01
+    KN->>WF: grounded + action
+    WF->>M: run_network_diagnostics(user, building)
+    M-->>WF: access point DEGRADED, Networking notified
+    WF->>M: create_ticket(network, P3)
+    M-->>WF: INC-261118-4EEEF
+    WF->>RS: tool results + ticket
+    RS-->>S: steps + source + "Done for you" + "Did this fix it?"
+
+    alt Student taps "Yes, fixed"
+        S->>M: update_ticket(resolved)
+        M-->>S: ticket closed
+    else Student taps "No, get a person"
+        S->>ES: wants a person
+        ES->>M: update_ticket(escalated, handoff note)
+        ES->>RS: team = Networking, channel, SLA 1 business day
+        RS-->>S: "A person is taking over" + ticket number
+        M-->>T: ticket in queue with redacted request and agent path
+    end

@@ -1,0 +1,44 @@
+%% SpartanAssist system design (Team Auto-Mates)
+flowchart LR
+    U([Student / Faculty<br/>chat message]) --> PG
+
+    subgraph AGENTS["LangGraph StateGraph · HelpdeskState"]
+        direction LR
+        PG["1 Privacy Guard<br/>hide IDs, emails,<br/>phones, passwords"] --> IN["2 Intake<br/>category · P1–P4<br/>confidence · action"]
+        IN -->|"IT issue"| KN["3 Knowledge<br/>RAG top-2 + citation check"]
+        IN -->|"off-topic"| RS["6 Responder<br/>one clear reply"]
+        KN -->|"fixable + action"| WF["4 Workflow<br/>calls MCP tools<br/>logs ticket"]
+        KN -->|"how-to answered"| RS
+        KN -->|"P1 · security · no source<br/>wants a person · hardware"| ES["5 Escalation<br/>team · channel · SLA<br/>handoff note"]
+        WF -->|"success"| RS
+        WF -->|"attack in log · tool failed"| ES
+        ES --> RS
+    end
+
+    RS --> OUT([Reply + ticket number])
+
+    subgraph DATA["Knowledge"]
+        KB[("11 KB runbooks<br/>24 section chunks")] --> VDB[("ChromaDB<br/>gemini-embedding-001<br/>similarity floor")]
+    end
+    VDB -.-> KN
+
+    subgraph MCP["helpdesk_mcp_server.py · MCP (stdio)"]
+        T1["create / update / list_ticket"]
+        T2["send_password_reset · unlock_account"]
+        T3["analyze_auth_log · run_network_diagnostics"]
+        T4["check_service_status · check_license"]
+    end
+    WF <--> MCP
+    ES --> T1
+    MCP --> TK[("Tickets<br/>SQLite or GitHub Issues")]
+
+    LLM{{"Gemini 2.5 Flash<br/>offline rule backup"}} -.-> IN
+    LLM -.-> RS
+    STAFF([IT staff<br/>Faculty console · VS Code Copilot]) <--> MCP
+
+    classDef agent fill:#E8F0FB,stroke:#1F4E9A,color:#0B1F3A
+    classDef esc fill:#FDF1DC,stroke:#B26A00,color:#3A2400
+    classDef store fill:#EEF6F0,stroke:#2E7D4F,color:#0F2D1A
+    class PG,IN,KN,WF,RS agent
+    class ES esc
+    class KB,VDB,TK store
